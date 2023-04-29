@@ -1,0 +1,253 @@
+---
+title: "NK_cells_10pat_v1.2"
+output: html_document
+date: "2023-04-28"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+#.libPaths( c( "/home/gb595/R/x86_64-pc-linux-gnu-library/4.1" , .libPaths() ) )
+#.libPaths(.libPaths()[c(1, 3, 4, 5)])
+
+library(readr)
+library(pheatmap)
+library(RColorBrewer)
+library(viridis)
+library(Matrix)
+library(ggplot2)
+library(dplyr)
+library(SeuratObject)
+library(Seurat)
+library(tidyverse)
+```
+
+##Pre-processing scRNA-seq data
+
+```{r}
+NK_cells <- readRDS("NK_cells.rds")
+NK.list <- SplitObject(NK_cells, split.by = "patient")
+
+for (i in 1:length(NK.list)){
+  NK.list[[i]] <- SCTransform(NK.list[[i]], vars.to.regress="percent.mt")
+}
+
+features <- SelectIntegrationFeatures(NK.list, nfeatures=3000)
+
+NK.list <- PrepSCTIntegration(NK.list, assay="SCT", anchor.features = features)
+
+anchors <- FindIntegrationAnchors(object.list = NK.list, normalization.method = "SCT", anchor.features = features) #, k.filter=50)
+
+NK.integrated <- IntegrateData(anchorset = anchors, new.assay.name = "integrated", normalization.method = "SCT", dims = 1:30, k.weight = 100, sd.weight = 1, preserve.order = F, eps=0, verbose = T)
+
+saveRDS(NK.integrated, "NK_integrated_10pat.rds")
+NK.integrated <- readRDS("NK_integrated_10pat.rds")
+
+rm(NK.list, NK_cells, anchors)
+```
+
+
+##Pre-processing pySCENIC output
+
+```{r}
+setwd("/data/gb595/therapy_response/NK_cells_10pat/v1.2/NK_AUCell_10pat")
+temp = list.files(pattern = "*.csv")
+AUCell_list = lapply(temp, read_csv)
+
+for(i in 1:20){
+  AUCell_list[[i]] <- column_to_rownames(AUCell_list[[i]], var="Cell")
+}
+
+rm(temp)
+```
+
+```{r}
+#sum up the 20 AUCells
+
+setwd("/data/gb595/therapy_response/NK_cells_10pat/v1.2")
+AUCell_sum <- AUCell_list[[1]]
+
+for(i in 2:20){
+  AUCell_tmp <- AUCell_list[[i]]
+  cols <-  unique(c(colnames(AUCell_sum), colnames(AUCell_tmp)))
+  rows <- unique(c(rownames(AUCell_sum), rownames(AUCell_tmp)))
+  
+  dummy_m1 <- matrix(0, nrow = length(rows), ncol = length(cols), 
+                   dimnames = list(rows, cols))
+  dummy_m2 <- dummy_m1
+  
+  dummy_m1[rownames(AUCell_sum), colnames(AUCell_sum)] <- as.matrix(AUCell_sum)
+  dummy_m2[rownames(AUCell_tmp), colnames(AUCell_tmp)] <- as.matrix(AUCell_tmp)
+  
+  AUCell_sum <- dummy_m1 + dummy_m2
+}
+
+rm(dummy_m1, dummy_m2, AUCell_tmp, cols, rows)
+```
+
+```{r}
+#Identify regulons that appear in at least 19 runs out of 20
+
+all_regulons <- c()
+
+for(i in 1:20){
+  all_regulons <- c(all_regulons, colnames(AUCell_list[[i]]))
+}
+
+all_regulons_table <- table(all_regulons)
+length(unique(all_regulons))
+tmp <- all_regulons_table>=19
+regulons_95pct <- names(all_regulons_table[tmp])
+
+rm(all_regulons_table, all_regulons)
+
+AUCell_95pct <- AUCell_sum[, regulons_95pct]
+```
+
+```{r}
+#Create a Seurat object for each patient
+
+NK_cells <- readRDS("NK_cells.rds")
+NK.list <- SplitObject(NK_cells, split.by = "patient")
+rm(NK_cells)
+
+PD43948_cellID <- NK.list[["PD43948"]]@assays[["RNA"]]@counts@Dimnames[[2]]
+PD43824_cellID <- NK.list[["PD43824"]]@assays[["RNA"]]@counts@Dimnames[[2]]
+PD44966_cellID <- NK.list[["PD44966"]]@assays[["RNA"]]@counts@Dimnames[[2]]
+PD44967_cellID <- NK.list[["PD44967"]]@assays[["RNA"]]@counts@Dimnames[[2]]
+PD45814_cellID <- NK.list[["PD45814"]]@assays[["RNA"]]@counts@Dimnames[[2]]
+PD45815_cellID <- NK.list[["PD45815"]]@assays[["RNA"]]@counts@Dimnames[[2]]
+PD45816_cellID <- NK.list[["PD45816"]]@assays[["RNA"]]@counts@Dimnames[[2]]
+PD47171_cellID <- NK.list[["PD47171"]]@assays[["RNA"]]@counts@Dimnames[[2]]
+PD47465_cellID <- NK.list[["PD47465"]]@assays[["RNA"]]@counts@Dimnames[[2]]
+PD47512_cellID <- NK.list[["PD47512"]]@assays[["RNA"]]@counts@Dimnames[[2]]
+
+AUCell_95pct <- t(AUCell_95pct)
+
+PD43948_AUCell <- AUCell_95pct[, PD43948_cellID]
+PD43824_AUCell <- AUCell_95pct[, PD43824_cellID]
+PD44966_AUCell <- AUCell_95pct[, PD44966_cellID]
+PD44967_AUCell <- AUCell_95pct[, PD44967_cellID]
+PD45814_AUCell <- AUCell_95pct[, PD45814_cellID]
+PD45815_AUCell <- AUCell_95pct[, PD45815_cellID]
+PD45816_AUCell <- AUCell_95pct[, PD45816_cellID]
+PD47171_AUCell <- AUCell_95pct[, PD47171_cellID]
+PD47465_AUCell <- AUCell_95pct[, PD47465_cellID]
+PD47512_AUCell <- AUCell_95pct[, PD47512_cellID]
+
+PD43948_AUCell_meta <- data.frame(row.names = PD43948_cellID, patient=rep("PD43948", length(PD43948_cellID)))
+PD43824_AUCell_meta <- data.frame(row.names = PD43824_cellID, patient=rep("PD43824", length(PD43824_cellID)))
+PD44966_AUCell_meta <- data.frame(row.names = PD44966_cellID, patient=rep("PD44966", length(PD44966_cellID)))
+PD44967_AUCell_meta <- data.frame(row.names = PD44967_cellID, patient=rep("PD44967", length(PD44967_cellID)))
+PD45814_AUCell_meta <- data.frame(row.names = PD45814_cellID, patient=rep("PD45814", length(PD45814_cellID)))
+PD45815_AUCell_meta <- data.frame(row.names = PD45815_cellID, patient=rep("PD45815", length(PD45815_cellID)))
+PD45816_AUCell_meta <- data.frame(row.names = PD45816_cellID, patient=rep("PD45816", length(PD45816_cellID)))
+PD47171_AUCell_meta <- data.frame(row.names = PD47171_cellID, patient=rep("PD47171", length(PD47171_cellID)))
+PD47465_AUCell_meta <- data.frame(row.names = PD47465_cellID, patient=rep("PD47465", length(PD47465_cellID)))
+PD47512_AUCell_meta <- data.frame(row.names = PD47512_cellID, patient=rep("PD47512", length(PD47512_cellID)))
+
+PD43948_AUCell_Seurat <- CreateSeuratObject(counts = PD43948_AUCell, assay = "AUCell", meta.data = PD43948_AUCell_meta)
+PD43824_AUCell_Seurat <- CreateSeuratObject(counts = PD43824_AUCell, assay = "AUCell", meta.data = PD43824_AUCell_meta)
+PD44966_AUCell_Seurat <- CreateSeuratObject(counts = PD44966_AUCell, assay = "AUCell", meta.data = PD44966_AUCell_meta)
+PD44967_AUCell_Seurat <- CreateSeuratObject(counts = PD44967_AUCell, assay = "AUCell", meta.data = PD44967_AUCell_meta)
+PD45814_AUCell_Seurat <- CreateSeuratObject(counts = PD45814_AUCell, assay = "AUCell", meta.data = PD45814_AUCell_meta)
+PD45815_AUCell_Seurat <- CreateSeuratObject(counts = PD45815_AUCell, assay = "AUCell", meta.data = PD45815_AUCell_meta)
+PD45816_AUCell_Seurat <- CreateSeuratObject(counts = PD45816_AUCell, assay = "AUCell", meta.data = PD45816_AUCell_meta)
+PD47171_AUCell_Seurat <- CreateSeuratObject(counts = PD47171_AUCell, assay = "AUCell", meta.data = PD47171_AUCell_meta)
+PD47465_AUCell_Seurat <- CreateSeuratObject(counts = PD47465_AUCell, assay = "AUCell", meta.data = PD47465_AUCell_meta)
+PD47512_AUCell_Seurat <- CreateSeuratObject(counts = PD47512_AUCell, assay = "AUCell", meta.data = PD47512_AUCell_meta)
+
+AUCell_seurat_list <- list(PD43948 = PD43948_AUCell_Seurat, PD43824 = PD43824_AUCell_Seurat, PD44966 = PD44966_AUCell_Seurat, PD44967= PD44967_AUCell_Seurat, PD45814 = PD45814_AUCell_Seurat, PD45815 = PD45815_AUCell_Seurat, PD45816 = PD45816_AUCell_Seurat, PD47171 = PD47171_AUCell_Seurat, PD47465 = PD47465_AUCell_Seurat, PD47512 = PD47512_AUCell_Seurat)
+
+rm(PD43948_cellID,PD43824_cellID, PD44966_cellID, PD44967_cellID, PD45814_cellID, PD45815_cellID, PD45816_cellID, PD47171_cellID, PD47465_cellID, PD47512_cellID,
+   PD43948_AUCell, PD43824_AUCell, PD44966_AUCell, PD44967_AUCell,PD45814_AUCell,PD45815_AUCell,PD45816_AUCell,PD47171_AUCell,PD47465_AUCell,PD47512_AUCell,
+   PD43948_AUCell_meta, PD43824_AUCell_meta, PD44966_AUCell_meta, PD44967_AUCell_meta, PD45814_AUCell_meta, PD45815_AUCell_meta, PD45816_AUCell_meta, PD47171_AUCell_meta, PD47465_AUCell_meta, PD47512_AUCell_meta, 
+   PD43948_AUCell_Seurat, PD43824_AUCell_Seurat, PD44966_AUCell_Seurat, PD44967_AUCell_Seurat, PD45814_AUCell_Seurat,PD45815_AUCell_Seurat,PD45816_AUCell_Seurat, PD47171_AUCell_Seurat, PD47465_AUCell_Seurat, PD47512_AUCell_Seurat)
+```
+
+```{r}
+#integrate data
+
+features <- SelectIntegrationFeatures(AUCell_seurat_list, assay = rep("AUCell", 10))
+anchors <- FindIntegrationAnchors(object.list = AUCell_seurat_list, assay = rep("AUCell", 10), anchor.features = features)
+AUCell.integrated <- IntegrateData(anchorset = anchors)
+
+saveRDS(AUCell.integrated, "AUCell.integrated_NK_10pat_v1.rds")
+#AUCell.integrated <- readRDS("AUCell.integrated_NK_10pat_v1.rds")
+```
+
+##Clustering
+
+```{r}
+DefaultAssay(AUCell.integrated) <- "integrated"
+
+AUCell.integrated <- ScaleData(AUCell.integrated, verbose = FALSE)
+AUCell.integrated <- RunPCA(AUCell.integrated, npcs = 50, verbose = FALSE)
+```
+
+```{r}
+DefaultAssay(AUCell.integrated) <- "integrated"
+AUCell.integrated <- FindNeighbors(AUCell.integrated, assay="integrated", reduction = "pca", dims = 1:20)
+AUCell.integrated <- FindClusters(AUCell.integrated, resolution = 0.4)
+AUCell.integrated@meta.data[["dims20_res04"]] <- AUCell.integrated@meta.data[["seurat_clusters"]]
+```
+
+```{r}
+activated_reg <- c("JUN(+)", "FOS(+)", "ATF3(+)", "NFATC1(+)", "YY1(+)")
+terminally_diff_circ_reg <- c("TBX21(+)", "TFEB(+)", "XBP1(+)")
+terminally_dig_IGFBP7_reg <- c("RARG(+)", "RARB(+)")
+decidual_like_reg <- c("HOXA9(+)", "RXRA(+)")
+CD56bright_reg <- c("GATA3(+)", "TCF7(+)", "AHR(+)", "SOX4(+)", "RUNX2(+)", "ZEB1(+)")
+mature_reg <- c("PRDM1(+)", "SPI1(+)", "STAT3(+)", "ELF4(+)", "FOXP1(+)")
+ferroptosis_reg <-c("HNF4A(+)", "NR1H4(+)", "TFCP2L1(+)", "NR2F2(+)")
+proliferating_reg <- c("E2F1(+)", "E2F2(+)", "BRCA1(+)")
+inflam_reg <- c("IRF7(+)", "IRF9(+)", "STAT1(+)", "STAT2(+)")
+
+final_regulons <- c(activated_reg, terminally_diff_circ_reg, terminally_dig_IGFBP7_reg, mature_reg, decidual_like_reg, CD56bright_reg, ferroptosis_reg, proliferating_reg, 
+                    inflam_reg)
+```
+
+```{r, fig.width=7,fig.height =8, fig.wide = TRUE, fig.align = "center"}
+DefaultAssay(AUCell.integrated) <- "AUCell"
+DotPlot(AUCell.integrated, features = c(final_regulons), group.by = "dims20_res04") + RotatedAxis() + coord_flip() + scale_colour_gradient2(low = "dodgerblue2", mid = "grey90", high = "red",midpoint = 0)
+```
+
+```{r}
+activated <- c("NFKBIA", "KLF6", "CD69", "IER2", "IFNG")
+terminally_dif <- c("CX3CR1", "PFN1", "GZMH", "GZMM", "S100A4", "FGFBP2", "ITGB2","FCGR3A", "KLRD1", "ITGB2", 'IGFBP7')
+mature <- c("AHNAK", "FLNA")
+decidual_like <- c("ITM2C", "CXCR4", "XCL1", "KRT86",  "KRT81")
+CD56bright <- c( "IL7R", "SELL", "KLRC1", "GZMK", "CCR7")
+ferroptosis <- c("FXYD2", "FTL", "RHOB", "GPX3","GPX4", "PEBP1" )
+cycling <- c("STMN1", "TUBA1B", "GAPDH", "TUBB")
+inflam <- c("IFITM1", "ISG15", "IFI6", "LY6E")
+low_marker <- c("KLRB1")
+
+markers <- c(activated, terminally_dif, mature, decidual_like, CD56bright, ferroptosis, cycling, inflam, low_marker)
+```
+
+```{r, fig.width=7,fig.height =10, fig.wide = TRUE, fig.align = "center"}
+AUCell_table1 <- data.frame(cell_ID = AUCell.integrated@assays[["AUCell"]]@counts@Dimnames[[2]],
+                           a = AUCell.integrated@meta.data[["dims20_res04"]])
+
+AUCell_table_matched1 <- AUCell_table1 %>%
+  slice(match(NK.integrated@assays[["RNA"]]@counts@Dimnames[[2]], cell_ID))
+
+identical(AUCell_table_matched1$cell_ID, NK.integrated@assays[["RNA"]]@counts@Dimnames[[2]]) #TRUE
+
+NK.integrated@meta.data[["dims20_res04"]] <- AUCell_table_matched1$a
+DefaultAssay(NK.integrated) <- "SCT"
+
+DotPlot(NK.integrated, features = unique(c(markers)), group.by = "dims20_res04") + RotatedAxis() + coord_flip() + scale_colour_gradient2(low = "royalblue2", mid = "grey90", high = "red3",midpoint = 0)
+DotPlot(NK.integrated, features = unique(c(markers)), group.by = "SCENIC_anno") + RotatedAxis() + coord_flip() + scale_colour_gradient2(low = "royalblue2", mid = "grey90", high = "red3",midpoint = 0)
+```
+
+```{r, fig.width=9,fig.height =5, fig.wide = TRUE, fig.align = "center"}
+AUCell.integrated <- RunUMAP(AUCell.integrated, reduction = "pca", dims = 1:20, assay="integrated")
+DimPlot(AUCell.integrated, reduction="umap", group.by = "dims20_res04", label=T)
+```
+
+
+
